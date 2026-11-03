@@ -1,0 +1,5 @@
+#!/bin/sh
+branch="$(git symbolic-ref --short HEAD 2>/dev/null)"
+[ "$branch" = "main" ] || exit 0
+
+exec sh "$(git rev-parse --show-toplevel)/.githooks/run-tests.sh"
