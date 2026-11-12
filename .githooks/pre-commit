@@ -1,11 +1,15 @@
 #!/bin/sh
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$HOOKS_DIR/gate.conf"
+
 branch="$(git symbolic-ref --short HEAD 2>/dev/null)"
-[ "$branch" = "main" ] || exit 0
+[ "$branch" = "$PROTECTED_BRANCH" ] || exit 0
 
 # Finishing a merge after resolving conflicts goes through pre-commit, not pre-merge-commit.
 if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
-  exec sh "$(git rev-parse --show-toplevel)/.githooks/run-tests.sh"
+  git diff --cached --name-only HEAD | bash "$HOOKS_DIR/run-gate.sh"
+  exit $?
 fi
 
-echo "BLOCKED: direct commits to main are not allowed. Commit on ari or a feature branch and merge." >&2
+echo "BLOCKED: direct commits to $PROTECTED_BRANCH are not allowed. Commit on ari or a feature branch and merge." >&2
 exit 1
