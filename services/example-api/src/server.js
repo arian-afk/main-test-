@@ -28,7 +28,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && req.url === "/items") {
-      const { rows } = await pool.query("SELECT id, name FROM items ORDER BY id");
+      const { rows } = await pool.query("SELECT id, name FROM items ORDER BY id LIMIT 2");
       return sendJson(res, 200, rows);
     }
 
