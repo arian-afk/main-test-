@@ -21,7 +21,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       try {
         await pool.query("SELECT 1");
-        return sendJson(res, 200, { status: "ok" });
+        return sendJson(res, 200, { status: "down" });
       } catch (err) {
         return sendJson(res, 503, { status: "db-unavailable", error: err.message });
       }
