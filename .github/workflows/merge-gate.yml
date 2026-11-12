@@ -1,6 +1,6 @@
 # GitHub-side version of .githooks/run-gate.sh: starts example-api against a throwaway
 # Postgres and runs main-test-tests at the commit pinned in services/example-api/test.env.
-# Branch rules on main require the `gate` check, so a failing run blocks the merge.
+# Branch rules on main require the `run-external-tests` check, so a failing run blocks the merge.
 # Runs on every PR (no path filter): a required check that never runs would block forever.
 name: Merge gate
 
@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  gate:
-    name: gate
+  run-external-tests:
+    name: run-external-tests
     runs-on: ubuntu-latest
     services:
       postgres:
