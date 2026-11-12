@@ -68,16 +68,22 @@ install_deps() {
   fi
 }
 
+# Hooks run with GIT_DIR/GIT_INDEX_FILE etc. pointing at this repo; they must not leak into the test repo.
+tests_git() {
+  env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR git -C "$TESTS_LOCAL_DIR" "$@"
+}
+
 [ -e "$TESTS_LOCAL_DIR/.git" ] || block "test repo not found at $TESTS_LOCAL_DIR"
 
-full_ref="$(git -C "$TESTS_LOCAL_DIR" rev-parse --verify -q "$PIN_REF^{commit}")"
+full_ref="$(tests_git rev-parse --verify -q "$PIN_REF^{commit}")"
 if [ -z "$full_ref" ]; then
-  git -C "$TESTS_LOCAL_DIR" fetch -q origin "$PIN_REF" 2>/dev/null
-  full_ref="$(git -C "$TESTS_LOCAL_DIR" rev-parse --verify -q "$PIN_REF^{commit}")" ||
+  tests_git fetch -q origin "$PIN_REF" 2>/dev/null
+  full_ref="$(tests_git rev-parse --verify -q "$PIN_REF^{commit}")" ||
     block "pinned test commit $PIN_REF not found in $TESTS_LOCAL_DIR (fetch it or fix $PIN_FILE)"
 fi
 
-if [ "$(git -C "$TESTS_LOCAL_DIR" rev-parse HEAD)" = "$full_ref" ]; then
+if [ "$(tests_git rev-parse HEAD)" = "$full_ref" ]; then
   TESTS_DIR="$TESTS_LOCAL_DIR"
   say "Tests: $TESTS_DIR (local checkout is at the pinned commit ${full_ref:0:7})"
 else
@@ -85,10 +91,10 @@ else
   if [ ! -d "$TESTS_DIR" ]; then
     say "Creating test worktree for pinned commit ${full_ref:0:7}"
     mkdir -p "$CACHE_DIR"
-    git -C "$TESTS_LOCAL_DIR" worktree add -q --detach "$TESTS_DIR" "$full_ref" ||
+    tests_git worktree add -q --detach "$TESTS_DIR" "$full_ref" ||
       block "could not create worktree at $TESTS_DIR"
     if ! (cd "$TESTS_DIR" && install_deps); then
-      git -C "$TESTS_LOCAL_DIR" worktree remove --force "$TESTS_DIR" 2>/dev/null
+      tests_git worktree remove --force "$TESTS_DIR" 2>/dev/null
       block "installing test dependencies failed"
     fi
   fi
