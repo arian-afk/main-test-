@@ -1,0 +1,38 @@
+#!/bin/sh
+# Re-run the gate before PROTECTED_BRANCH is pushed, against the exact commit being pushed.
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$HOOKS_DIR/gate.conf"
+
+zero=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/$PROTECTED_BRANCH" ] || continue
+  [ "$local_sha" = "$zero" ] && continue
+
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    changed="--all"
+  else
+    changed="$(git diff --name-only "$remote_sha" "$local_sha")"
+  fi
+
+  if [ "$(git rev-parse HEAD)" = "$local_sha" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
+    if [ "$changed" = "--all" ]; then
+      bash "$HOOKS_DIR/run-gate.sh" --all </dev/null || exit 1
+    else
+      printf '%s\n' "$changed" | bash "$HOOKS_DIR/run-gate.sh" || exit 1
+    fi
+  else
+    # Pushing something other than the clean checkout: test that commit in a temporary worktree.
+    tmp="$(git rev-parse --path-format=absolute --git-common-dir)/gate-push-$$"
+    git worktree add -q --detach "$tmp" "$local_sha" || exit 1
+    if [ "$changed" = "--all" ]; then
+      (cd "$tmp" && bash .githooks/run-gate.sh --all </dev/null)
+    else
+      (cd "$tmp" && printf '%s\n' "$changed" | bash .githooks/run-gate.sh)
+    fi
+    status=$?
+    git worktree remove --force "$tmp"
+    [ "$status" -eq 0 ] || exit 1
+  fi
+done
+exit 0

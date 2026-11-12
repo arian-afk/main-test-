@@ -1,0 +1,14 @@
+#!/bin/sh
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$HOOKS_DIR/gate.conf"
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null)"
+[ "$branch" = "$PROTECTED_BRANCH" ] || exit 0
+
+# Git writes MERGE_HEAD after this hook exits, so the merge can't be aborted from here.
+# The marker lets `git safe-merge` abort only when tests (not conflicts) stopped the merge.
+if ! git diff --cached --name-only HEAD | bash "$HOOKS_DIR/run-gate.sh"; then
+  : > "$(git rev-parse --git-path TESTS_FAILED)"
+  echo "Run 'git merge --abort' to back out, or use 'git safe-merge' to abort automatically." >&2
+  exit 1
+fi
