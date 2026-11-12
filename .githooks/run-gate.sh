@@ -141,6 +141,7 @@ done
 PIDS=()
 PG_STARTED=0
 SUCCEEDED=0
+DIRTY_BEFORE="$(git diff --name-only)"
 
 kill_tree() {
   local pid="$1" winpid
@@ -156,6 +157,11 @@ cleanup() {
   local pid f
   for pid in "${PIDS[@]}"; do kill_tree "$pid"; done
   [ "$PG_STARTED" -eq 1 ] && docker rm -f "$PG_CONTAINER" >/dev/null 2>&1
+  # Tracked files touched by installs/builds would block `git merge --abort`; restore them from the index.
+  git diff --name-only | while IFS= read -r f; do
+    printf '%s\n' "$DIRTY_BEFORE" | grep -qxF "$f" && continue
+    git checkout -q -- "$f" && say "Restored $f (modified during the gate run)"
+  done
   if [ "$SUCCEEDED" -ne 1 ]; then
     for f in "$LOG_DIR"/*.log; do
       [ -s "$f" ] || continue

@@ -53,7 +53,7 @@ $unexpected"
   git config "branch.$target.mergeoptions" --no-ff
   git config --unset tests.repo || true
   git config --unset tests.cmd || true
-  git config alias.safe-merge '!f() { m="$(git rev-parse --git-path TESTS_FAILED)"; rm -f "$m"; git merge "$@"; s=$?; if [ -f "$m" ]; then rm -f "$m"; git merge --abort; echo "Merge aborted automatically: tests failed, the branch is unchanged." >&2; fi; return $s; }; f'
+  git config alias.safe-merge '!f() { m="$(git rev-parse --git-path TESTS_FAILED)"; rm -f "$m"; git merge "$@"; s=$?; if [ -f "$m" ]; then rm -f "$m"; if git merge --abort; then echo "Merge aborted automatically: tests failed, the branch is unchanged." >&2; else echo "Tests failed and the automatic abort failed; run git merge --abort yourself." >&2; fi; fi; return $s; }; f'
   echo "OK"
 
   step "Committing hook changes on $WORK_BRANCH"
