@@ -1,0 +1,135 @@
+# GitHub-side version of .githooks/run-gate.sh: starts example-api against a throwaway
+# Postgres and runs main-test-tests at the commit pinned in services/example-api/test.env.
+# Branch rules on main require the `gate` check, so a failing run blocks the merge.
+# Runs on every PR (no path filter): a required check that never runs would block forever.
+name: Merge gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: example
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d example"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PIN_FILE: services/example-api/test.env
+      SERVICE_DIR: services/example-api
+      API_PORT: '4201'
+      EXAMPLE_API_DB: postgresql://user:password@127.0.0.1:55433/example
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Read test pin
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          get() { sed -n "s/^TESTS_$1=//p" "$PIN_FILE" | tr -d '\r' | tail -n 1; }
+          enabled="$(get ENABLED)"
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [ "$enabled" != "true" ]; then
+            echo "Tests disabled in $PIN_FILE; skipping."
+            exit 0
+          fi
+          repo="$(get GITHUB_REPOSITORY)"
+          ref="$(get REF)"
+          target="$(get TARGET)"
+          [ -n "$repo" ] || { echo "::error::TESTS_GITHUB_REPOSITORY missing in $PIN_FILE"; exit 1; }
+          [ "${#ref}" -ge 7 ] || { echo "::error::TESTS_REF missing or too short in $PIN_FILE"; exit 1; }
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "target=${target:-.}" >> "$GITHUB_OUTPUT"
+          echo "Will run $repo @ $ref"
+
+      - name: Install and seed example-api
+        if: steps.pin.outputs.enabled == 'true'
+        working-directory: ${{ env.SERVICE_DIR }}
+        run: |
+          npm ci --no-fund --no-audit
+          npm run --silent db:setup
+
+      - name: Start example-api
+        if: steps.pin.outputs.enabled == 'true'
+        working-directory: ${{ env.SERVICE_DIR }}
+        env:
+          PORT: ${{ env.API_PORT }}
+        run: |
+          nohup node src/server.js > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for /health
+        if: steps.pin.outputs.enabled == 'true'
+        run: |
+          url="http://127.0.0.1:${API_PORT}/health"
+          for _ in $(seq 1 60); do
+            if curl -fsS "$url" > /dev/null; then
+              echo "example-api is ready: $url"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::example-api did not become healthy"
+          exit 1
+
+      - name: Checkout tests at pinned commit
+        if: steps.pin.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.ref }}
+          path: tests
+          # Read-only deploy key on the test repo; only needed while that repo is private.
+          ssh-key: ${{ secrets.TESTS_REPO_DEPLOY_KEY }}
+
+      - name: Verify pinned commit
+        if: steps.pin.outputs.enabled == 'true'
+        run: |
+          resolved="$(git -C tests rev-parse HEAD)"
+          pin="${{ steps.pin.outputs.ref }}"
+          case "$resolved" in
+            "$pin"*) echo "Tests pinned at $resolved ($(git -C tests log -1 --format=%s))" ;;
+            *) echo "::error::Pinned $pin but checked out $resolved"; exit 1 ;;
+          esac
+
+      - name: Run tests
+        if: steps.pin.outputs.enabled == 'true'
+        working-directory: tests/${{ steps.pin.outputs.target }}
+        env:
+          API_BASE_URL: http://127.0.0.1:${{ env.API_PORT }}
+          MAIN_REPO: ${{ github.workspace }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-fund --no-audit; fi
+          npm test
+
+      - name: Show example-api log
+        if: failure() && steps.pin.outputs.enabled == 'true'
+        run: cat "${SERVICE_DIR}/server.log" || true
+
+      - name: Stop example-api
+        if: always() && steps.pin.outputs.enabled == 'true'
+        run: |
+          if [ -f "${SERVICE_DIR}/server.pid" ]; then kill "$(cat "${SERVICE_DIR}/server.pid")" || true; fi

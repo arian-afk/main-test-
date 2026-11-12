@@ -44,5 +44,13 @@ Logs from each run: `.git/gate-logs/`. Worktrees for non-current test pins: `.gi
 
 ## Updating the tests
 
-Commit in `main-test-tests`, then put the new SHA in `services/example-api/test.env`
-as `TESTS_REF` and commit that on `ari`.
+Commit in `main-test-tests` and push it to GitHub, then put the new SHA in
+`services/example-api/test.env` as `TESTS_REF` and commit that on `ari`.
+
+## GitHub enforcement
+
+`.github/workflows/merge-gate.yml` runs the same check on GitHub for every pull
+request into `main` (job name `gate`), using `TESTS_GITHUB_REPOSITORY` from the pin
+file. A branch ruleset on `main` that requires the `gate` check is what actually
+blocks merges on GitHub. While `main-test-tests` is private, the workflow reads it
+with the `TESTS_REPO_DEPLOY_KEY` secret (a read-only deploy key on that repo).
