@@ -1,0 +1,84 @@
+# Lets a repo owner or collaborator turn the required run-external-tests check green
+# with a pull request comment: `/bypass-tests the reason`.
+# The ruleset stays on. A later push to the branch runs the tests again.
+# This file only takes effect once it is on main, because comment events use the
+# workflow from the default branch.
+name: Bypass tests
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  checks: write
+  pull-requests: write
+
+jobs:
+  bypass:
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/bypass-tests') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post a passing check for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+        run: |
+          set -euo pipefail
+          reason=$(printf '%s\n' "$COMMENT_BODY" | head -n 1 | sed 's|^/bypass-tests[[:space:]]*||')
+          if [ -z "$reason" ]; then
+            gh pr comment "$PR_NUMBER" --body "A bypass needs a reason on the same line: \`/bypass-tests the reason\`"
+            exit 1
+          fi
+
+          head_sha=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)
+
+          # A test run that finishes after this check would turn it red again.
+          # Cancel any still running, wait until they stop, then post the green check last.
+          cancel_ids=$(gh run list --commit "$head_sha" --workflow merge-gate.yml --json databaseId,status \
+            --jq '.[] | select(.status=="queued" or .status=="in_progress" or .status=="waiting") | .databaseId')
+          for id in $cancel_ids; do
+            gh run cancel "$id" || true
+          done
+          for _ in $(seq 1 30); do
+            still=$(gh run list --commit "$head_sha" --workflow merge-gate.yml --json status \
+              --jq '[.[] | select(.status=="queued" or .status=="in_progress" or .status=="waiting")] | length')
+            [ "$still" = "0" ] && break
+            sleep 2
+          done
+
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          summary=$(printf 'Bypassed by @%s.\n\nReason: %s\n\nComment: %s' "$COMMENTER" "$reason" "$COMMENT_URL")
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='run-external-tests' \
+            -f head_sha="$head_sha" \
+            -f status='completed' \
+            -f conclusion='success' \
+            -f started_at="$now" \
+            -f completed_at="$now" \
+            -f details_url="$COMMENT_URL" \
+            -f output[title]='Bypassed by comment' \
+            -f output[summary]="$summary"
+
+          gh pr comment "$PR_NUMBER" --body "Tests bypassed for \`$head_sha\` by @$COMMENTER. Reason: $reason. A new push runs the tests again."
+
+  refuse:
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/bypass-tests') &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tell the commenter they cannot bypass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "@$COMMENTER cannot bypass the tests. Only an owner or collaborator can, with \`/bypass-tests the reason\`."

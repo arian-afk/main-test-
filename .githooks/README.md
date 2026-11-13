@@ -54,3 +54,15 @@ request into `main` (check name `run-external-tests`), using `TESTS_GITHUB_REPOS
 from the pin file. A branch ruleset on `main` that requires that check is what actually
 blocks merges on GitHub. While `main-test-tests` is private, the workflow reads it
 with the `TESTS_REPO_DEPLOY_KEY` secret (a read-only deploy key on that repo).
+
+An owner or collaborator can pass a red check without running the tests by commenting
+on the pull request, with a reason on the same line:
+
+```
+/bypass-tests the production fix cannot wait for this test
+```
+
+That posts a successful `run-external-tests` check for the current commit. The comment
+only works once `.github/workflows/bypass-tests.yml` is on `main`. Anyone else who
+tries gets a reply saying they cannot. A new push to the branch runs the tests again.
+The local `git safe-merge` hook ignores this comment.
